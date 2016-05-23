@@ -285,12 +285,7 @@ int main(int argc, char *argv[])
 		pid_t pids[PARTITIONS];
 		stat(argv[2], &st);
 		int size = st.st_size;
-		str_in = (char *) malloc (size);
-		int i;
-		for(i=0; i<PARTITIONS; i++){
-			str_out[i] = (char *) malloc (size/PARTITIONS + size%PARTITIONS);
-		}
-		//createStringOfSize(size, &str_in, &str_out);
+		createStringOfSize(size, &str_in, &str_out);
 		printf("%d\n",size);
 		int part = 0, seeksize = size/PARTITIONS;
 		remove(s);
