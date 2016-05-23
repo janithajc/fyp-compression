@@ -28,17 +28,12 @@
 #define PARTITIONS 8
 
 // TODO: need to remove coupling of all these variables
-unsigned char
-		text_buf[N + F - 1];	/* ring buffer of size N,
-			with extra F-1 bytes to facilitate string comparison */
 
-char 	* str_in, // TODO: can have in global memory since
-		* str_out[PARTITIONS]; // TODO: need to come up with better way
 
 FILE	*infile, *outfile;  /* input & output files */
 
-struct stat st;
-void createStringOfSize(int size){
+struct stat st; /* to get file size */
+void createStringOfSize(int size, char * str_in, char * str_out[]){
 	str_in = (char *) malloc (size);
 	int i;
 	for(i=0; i<PARTITIONS; i++){
@@ -64,7 +59,8 @@ void InitTree(int lson[], int rson[], int dad[])  /* initialize trees */
 }
 
 // TODO: device
-void InsertNode(int r, int lson[], int rson[], int dad[], int *match_position, int *match_length)
+void InsertNode(int r, int lson[], int rson[], int dad[], int *match_position, int *match_length, unsigned char
+		text_buf[]) 
 	/* Inserts string of length F, text_buf[r..r+F-1], into one of the
 	   trees (text_buf[r]'th tree) and returns the longest-match position
 	   and length via the global variables match_position and match_length.
@@ -87,7 +83,7 @@ void InsertNode(int r, int lson[], int rson[], int dad[], int *match_position, i
 		}
 		for (i = 1; i < F; i++)
 			if ((cmp = key[i] - text_buf[p + i]) != 0)  break;
-		if (i > match_length) {
+		if (i > *match_length) {
 			*match_position = p;
 			if ((*match_length = i) >= F)  break;
 		}
@@ -122,7 +118,7 @@ void DeleteNode(int p, int lson[], int rson[], int dad[])  /* deletes node p fro
 }
 
 // TODO: global
-int Encode(int upper, int part, int offset)
+int Encode(int upper, int part, int offset, char * str_in, char * str_out[])  //txt buf
 {
 	int  i, c, len, r, s, last_match_length, code_buf_ptr;
 	
@@ -130,6 +126,10 @@ int Encode(int upper, int part, int offset)
 			set by the InsertNode() procedure. */	
 	int lson[N + 1], rson[N + 257], dad[N + 1];  /* left & right children &
 			parents -- These constitute binary search trees. */
+			
+	unsigned char
+		text_buf[N + F - 1];	/* ring buffer of size N,
+			with extra F-1 bytes to facilitate string comparison */
 			
 	unsigned char  code_buf[17], mask;
 	
@@ -153,11 +153,11 @@ int Encode(int upper, int part, int offset)
 		text_buf[r + len] = c;  /* Read F bytes into the last F bytes of
 			the buffer */
 	if ((textsize = len) == 0) return 0;  /* text of size zero */
-	for (i = 1; i <= F; i++) InsertNode(r - i, lson, rson, dad, &match_position, &match_length);  /* Insert the F strings,
+	for (i = 1; i <= F; i++) InsertNode(r - i, lson, rson, dad, &match_position, &match_length, text_buf);  /* Insert the F strings,
 		each of which begins with one or more 'space' characters.  Note
 		the order in which these strings are inserted.  This way,
 		degenerate trees will be less likely to occur. */
-	InsertNode(r,lson, rson, dad, &match_position, &match_length);  /* Finally, insert the whole string just read.  The
+	InsertNode(r,lson, rson, dad, &match_position, &match_length, text_buf);  /* Finally, insert the whole string just read.  The
 		global variables match_length and match_position are set. */
 	do {
 		if (match_length > len) match_length = len;  /* match_length
@@ -190,7 +190,7 @@ int Encode(int upper, int part, int offset)
 			s = (s + 1) & (N - 1);  r = (r + 1) & (N - 1);
 				/* Since this is a ring buffer, increment the position
 				   modulo N. */
-			InsertNode(r, lson, rson, dad, &match_position, &match_length);	/* Register the string in text_buf[r..r+F-1] */
+			InsertNode(r, lson, rson, dad, &match_position, &match_length, text_buf);	/* Register the string in text_buf[r..r+F-1] */
 		}
 		if ((textsize += i) > printcount) {
 			/*printf("%12ld\r", textsize);*/  printcount += 1024;
@@ -200,7 +200,7 @@ int Encode(int upper, int part, int offset)
 		while (i++ < last_match_length) {	/* After the end of text, */
 			DeleteNode(s, lson, rson, dad);					/* no need to read, but */
 			s = (s + 1) & (N - 1);  r = (r + 1) & (N - 1);
-			if (--len) InsertNode(r, lson, rson, dad, &match_position, &match_length);		/* buffer may not be empty. */
+			if (--len) InsertNode(r, lson, rson, dad, &match_position, &match_length, text_buf);		/* buffer may not be empty. */
 		}
 	} while (len > 0);	/* until length of string to be processed is zero */
 	if (code_buf_ptr > 1) {		/* Send remaining code. */
@@ -214,10 +214,15 @@ int Encode(int upper, int part, int offset)
 }
 
 // TODO: global
+// no branches
 void Decode(FILE * in)	/* Just the reverse of Encode(). */
 {
 	int  i, j, k, r, c;
 	unsigned int  flags;
+	
+	unsigned char
+		text_buf[N + F - 1];	/* ring buffer of size N,
+			with extra F-1 bytes to facilitate string comparison */
 	
 	for (i = 0; i < N - F; i++) text_buf[i] = ' ';
 	r = N - F;  flags = 0;
@@ -241,7 +246,7 @@ void Decode(FILE * in)	/* Just the reverse of Encode(). */
 	}
 }
 
-void readFile(FILE * in){
+void readFile(FILE * in, char * str_in){
 	int i = 0;
 	while(1){
 		char c = getc(in);
@@ -250,7 +255,7 @@ void readFile(FILE * in){
 	}
 }
 
-void writeFile(FILE * out, int part, int size){
+void writeFile(FILE * out, int part, int size, char * str_out[]){
 	int i = 0;
 	while(i < size){
 		putc(str_out[part][i++], out);
@@ -260,7 +265,9 @@ void writeFile(FILE * out, int part, int size){
 
 int main(int argc, char *argv[])
 {
-	char  *s, *in;
+	char  *s, *in;	
+	char * str_in, // TODO: can have in global memory since
+		* str_out[PARTITIONS]; // TODO: need to come up with better way
 	
 	if (argc != 4) {
 		printf("'lzss e file1 file2' encodes file1 into file2.\n"
@@ -278,11 +285,11 @@ int main(int argc, char *argv[])
 		pid_t pids[PARTITIONS];
 		stat(argv[2], &st);
 		int size = st.st_size;
-		createStringOfSize(size);
+		createStringOfSize(size, str_in, str_out);
 		printf("%d\n",size);
 		int part = 0, seeksize = size/PARTITIONS;
 		remove(s);
-		readFile(infile);
+		readFile(infile, str_in);
 		// TODO: move all to device memory;
 		// TODO: kernel call
 		// TODO: save all encoded files to array elements
@@ -303,8 +310,8 @@ int main(int argc, char *argv[])
 				FILE * out = fopen(s, "wb");
 				s[strlen(s)-2] = '\0';
 				//nice(-15);
-				int encSize = Encode(seeksize+(part==PARTITIONS ? size%PARTITIONS:0), part, size/PARTITIONS * part);
-				writeFile(out, part, encSize);
+				int encSize = Encode(seeksize+(part==PARTITIONS ? size%PARTITIONS:0), part, size/PARTITIONS * part, str_in, str_out);
+				writeFile(out, part, encSize, str_out);
 				return EXIT_SUCCESS;
 			}
 		}
