@@ -118,7 +118,7 @@ void DeleteNode(int p, int lson[], int rson[], int dad[])  /* deletes node p fro
 }
 
 // TODO: global
-int Encode(int upper, int part, int offset, char * str_in, char * str_out[])  //txt buf
+void Encode(int upper, int part, int offset, char * str_in, char * str_out[], int sizes[])  //txt buf
 {
 	int  i, c, len, r, s, last_match_length, code_buf_ptr;
 	
@@ -152,7 +152,10 @@ int Encode(int upper, int part, int offset, char * str_in, char * str_out[])  //
 	for (len = 0; len < F && (c = str_in[textcount+offset]) != EOF && ++textcount <= upper; len++)
 		text_buf[r + len] = c;  /* Read F bytes into the last F bytes of
 			the buffer */
-	if ((textsize = len) == 0) return 0;  /* text of size zero */
+	if ((textsize = len) == 0) {
+		sizes[part] = 0;
+		return;  /* text of size zero */
+	}
 	for (i = 1; i <= F; i++) InsertNode(r - i, lson, rson, dad, &match_position, &match_length, text_buf);  /* Insert the F strings,
 		each of which begins with one or more 'space' characters.  Note
 		the order in which these strings are inserted.  This way,
@@ -210,7 +213,7 @@ int Encode(int upper, int part, int offset, char * str_in, char * str_out[])  //
 	printf("In : %ld bytes\n", textsize);	/* Encoding is done. */
 	printf("Out: %ld bytes\n", codesize);
 	printf("Out/In: %.3f\n", (double)codesize / textsize);
-	return codesize;
+	sizes[part] = codesize;
 }
 
 // TODO: global
@@ -255,9 +258,9 @@ void readFile(FILE * in, char * str_in){
 	}
 }
 
-void writeFile(FILE * out, int part, int size, char * str_out[]){
+void writeFile(FILE * out, int part, int sizes[], char * str_out[]){
 	int i = 0;
-	while(i < size){
+	while(i < sizes[part]){
 		putc(str_out[part][i++], out);
 	}
 	putc(EOF, out);
@@ -268,6 +271,7 @@ int main(int argc, char *argv[])
 	char  *s, *in;	
 	char * str_in, // TODO: can have in global memory since
 		* str_out[PARTITIONS]; // TODO: need to come up with better way
+	int sizes[PARTITIONS];
 	
 	if (argc != 4) {
 		printf("'lzss e file1 file2' encodes file1 into file2.\n"
@@ -279,39 +283,51 @@ int main(int argc, char *argv[])
 	 || (s = argv[3], (outfile = fopen(s, "wb")) == NULL)) {
 		printf("??? %s\n", s);  return EXIT_FAILURE;
 	}
+	
 	if (toupper(*argv[1]) == 'E'){
 		time_t start = time(NULL);
 		printf("\nStart time: %ld\n", start);
-		pid_t pids[PARTITIONS];
+		
+		// file size
 		stat(argv[2], &st);
 		int size = st.st_size;
-		createStringOfSize(size, &str_in, &str_out);
 		printf("%d\n",size);
+		
+		
+		str_in = (char *) malloc (size);
+		
+		//createStringOfSize(size, &str_in, &str_out);
+		int i;
+		for(i=0; i<PARTITIONS; i++){
+			str_out[i] = (char *) malloc (size/PARTITIONS + size%PARTITIONS);
+		}		
+		
 		int part = 0, seeksize = size/PARTITIONS;
+		
 		remove(s);
+		
 		readFile(infile, str_in);
 		// TODO: move all to device memory;
+		// device malloc > copy to card
+		
 		// TODO: kernel call
 		// TODO: save all encoded files to array elements
 		// TODO: move that to main memory
 		// TODO: file write
+		
+		
+		pid_t pids[PARTITIONS];
 		for(part = 0; part < PARTITIONS; part++){
 			int pid =fork();
 			if(pid > 0) {
 				pids[part] = pid;
 				continue;
 			} else {
-				//chdir(path);
-				//FILE * infile_part = fopen(in, "rb");
-				//fseek(infile_part, seeksize*part, SEEK_SET);
-				//printf("%.2f%%\n",part/(float)PARTITIONS);
-				//printf("\n\nPart: %d\n\n", part);
 				sprintf(s,"%s.%d",s,part);
 				FILE * out = fopen(s, "wb");
 				s[strlen(s)-2] = '\0';
-				//nice(-15);
-				int encSize = Encode(seeksize+(part==PARTITIONS ? size%PARTITIONS:0), part, size/PARTITIONS * part, str_in, str_out);
-				writeFile(out, part, encSize, str_out);
+				Encode(seeksize+(part==PARTITIONS ? size%PARTITIONS:0), part, size/PARTITIONS * part, str_in, str_out, sizes);
+				writeFile(out, part, sizes, str_out);
 				return EXIT_SUCCESS;
 			}
 		}
@@ -327,6 +343,7 @@ int main(int argc, char *argv[])
 		//int msec = diff * 1000 / CLOCKS_PER_SEC;
 		//printf("Time taken %d seconds %d milliseconds\n", msec/1000, msec%1000);
 	} else {
+		// Decode
 		int part = 0;
 		for(part = 0; part < PARTITIONS; part++){
 			in[strlen(in)-2] = '\0';

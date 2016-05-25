@@ -170,9 +170,9 @@ void Encode(int upper, int part, int offset, char * str_in, char * str_out[], in
 			code_buf[0] |= mask;  /* 'send one byte' flag */
 			code_buf[code_buf_ptr++] = text_buf[r];  /* Send uncoded. */
 		} else {
-			code_buf[code_buf_ptr++] = (unsigned char) match_position+offset;
+			code_buf[code_buf_ptr++] = (unsigned char) match_position;
 			code_buf[code_buf_ptr++] = (unsigned char)
-				(((match_position+offset >> 4) & 0xf0)
+				(((match_position >> 4) & 0xf0)
 			  | (match_length - (THRESHOLD + 1)));  /* Send position and
 					length pair. Note match_length > THRESHOLD. */
 		}
@@ -258,9 +258,9 @@ void readFile(FILE * in, char * str_in){
 	}
 }
 
-void writeFile(FILE * out, int part, int sizes[], char * str_out[]){
+void writeFile(FILE * out, int part, int size, char * str_out[]){
 	int i = 0;
-	while(i < sizes[part]){
+	while(i < size){
 		putc(str_out[part][i++], out);
 	}
 	putc(EOF, out);
@@ -270,8 +270,7 @@ int main(int argc, char *argv[])
 {
 	char  *s, *in;	
 	char * str_in, // TODO: can have in global memory since
-		* str_out; // TODO: need to come up with better way
-	int sizes[PARTITIONS];
+		* str_out[PARTITIONS]; // TODO: need to come up with better way
 	
 	if (argc != 4) {
 		printf("'lzss e file1 file2' encodes file1 into file2.\n"
@@ -283,49 +282,44 @@ int main(int argc, char *argv[])
 	 || (s = argv[3], (outfile = fopen(s, "wb")) == NULL)) {
 		printf("??? %s\n", s);  return EXIT_FAILURE;
 	}
-	
 	if (toupper(*argv[1]) == 'E'){
 		time_t start = time(NULL);
 		printf("\nStart time: %ld\n", start);
-		
-		// file size
+		pid_t pids[PARTITIONS];
 		stat(argv[2], &st);
 		int size = st.st_size;
-		printf("%d\n",size);
-		
-		
 		str_in = (char *) malloc (size);
-		
+		int i;
+		for(i=0; i<PARTITIONS; i++){
+			str_out[i] = (char *) malloc (size/PARTITIONS + size%PARTITIONS);
+		}
 		//createStringOfSize(size, &str_in, &str_out);
-		str_out = (char *) malloc(size);	
-		
-		int part = 0, seeksize = size/PARTITIONS;
-		
+		printf("%d\n",size);
+		int part = 0, seeksize = size/PARTITIONS, sizes[PARTITIONS];
 		remove(s);
-		
 		readFile(infile, str_in);
 		// TODO: move all to device memory;
-		// device malloc > copy to card
-		
 		// TODO: kernel call
 		// TODO: save all encoded files to array elements
 		// TODO: move that to main memory
 		// TODO: file write
-		
-		
-		pid_t pids[PARTITIONS];
 		for(part = 0; part < PARTITIONS; part++){
 			int pid =fork();
 			if(pid > 0) {
 				pids[part] = pid;
 				continue;
 			} else {
+				//chdir(path);
+				//FILE * infile_part = fopen(in, "rb");
+				//fseek(infile_part, seeksize*part, SEEK_SET);
+				//printf("%.2f%%\n",part/(float)PARTITIONS);
+				//printf("\n\nPart: %d\n\n", part);
 				sprintf(s,"%s.%d",s,part);
 				FILE * out = fopen(s, "wb");
 				s[strlen(s)-2] = '\0';
-				//Encode << < 1, PARTITIONS >>>(size, str_in_cuda, str_out_cuda, sizes_cuda);
+				//nice(-15);
 				Encode(seeksize+(part==PARTITIONS ? size%PARTITIONS:0), part, size/PARTITIONS * part, str_in, str_out, sizes);
-				writeFile(out, part, sizes, str_out);
+				writeFile(out, part, sizes[part], str_out);
 				return EXIT_SUCCESS;
 			}
 		}
@@ -341,7 +335,6 @@ int main(int argc, char *argv[])
 		//int msec = diff * 1000 / CLOCKS_PER_SEC;
 		//printf("Time taken %d seconds %d milliseconds\n", msec/1000, msec%1000);
 	} else {
-		// Decode
 		int part = 0;
 		for(part = 0; part < PARTITIONS; part++){
 			in[strlen(in)-2] = '\0';

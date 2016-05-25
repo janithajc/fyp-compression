@@ -18,6 +18,7 @@
 #include <sys/wait.h>
 #include <unistd.h> 
 #include <time.h>
+#include "helpers.cuh"
 
 #define N		 4096	/* size of ring buffer */
 #define F		   18	/* upper limit for match_length */
@@ -42,7 +43,7 @@ void createStringOfSize(int size, char * str_in[], char ** str_out[]){
 }
 
 // TODO: device
-void InitTree(int lson[], int rson[], int dad[])  /* initialize trees */
+__device__ void InitTree(int lson[], int rson[], int dad[])  /* initialize trees */
 {
 	int  i;
 
@@ -59,7 +60,7 @@ void InitTree(int lson[], int rson[], int dad[])  /* initialize trees */
 }
 
 // TODO: device
-void InsertNode(int r, int lson[], int rson[], int dad[], int *match_position, int *match_length, unsigned char
+__device__ void InsertNode(int r, int lson[], int rson[], int dad[], int *match_position, int *match_length, unsigned char
 		text_buf[]) 
 	/* Inserts string of length F, text_buf[r..r+F-1], into one of the
 	   trees (text_buf[r]'th tree) and returns the longest-match position
@@ -96,7 +97,7 @@ void InsertNode(int r, int lson[], int rson[], int dad[], int *match_position, i
 }
 
 // TODO: device
-void DeleteNode(int p, int lson[], int rson[], int dad[])  /* deletes node p from tree */
+__device__ void DeleteNode(int p, int lson[], int rson[], int dad[])  /* deletes node p from tree */
 {
 	int  q;
 	
@@ -118,21 +119,27 @@ void DeleteNode(int p, int lson[], int rson[], int dad[])  /* deletes node p fro
 }
 
 // TODO: global
-void Encode(int upper, int part, int offset, char * str_in, char * str_out[], int sizes[])  //txt buf
+//                    
+__global__ void Encode(int size, char * str_in, char * str_out, int *sizes)  //txt buf
 {
 	int  i, c, len, r, s, last_match_length, code_buf_ptr;
+ 
+  	int part = threadIdx.x;  
+  	int seeksize = size/PARTITIONS;
+  	int upper = seeksize+(part==PARTITIONS ? size%PARTITIONS:0);
+  	int offset = size/PARTITIONS * part;
 	
-	int		match_position, match_length;  /* of longest match.  These are
+	int match_position, match_length;  /* of longest match.  These are
 			set by the InsertNode() procedure. */	
-	int lson[N + 1], rson[N + 257], dad[N + 1];  /* left & right children &
-			parents -- These constitute binary search trees. */
+	int 	lson[N + 1], 
+			rson[N + 257], 
+			dad[N + 1];  /* left & right children &
+				parents -- These constitute binary search trees. */
 			
-	unsigned char
-		text_buf[N + F - 1];	/* ring buffer of size N,
+	unsigned char text_buf[N + F - 1];	/* ring buffer of size N,
 			with extra F-1 bytes to facilitate string comparison */
 			
-	unsigned char  code_buf[17], mask;
-	
+	unsigned char  code_buf[17], mask;	
 	
 	unsigned long int
 			textsize = 0,	/* text size counter */
@@ -170,15 +177,15 @@ void Encode(int upper, int part, int offset, char * str_in, char * str_out[], in
 			code_buf[0] |= mask;  /* 'send one byte' flag */
 			code_buf[code_buf_ptr++] = text_buf[r];  /* Send uncoded. */
 		} else {
-			code_buf[code_buf_ptr++] = (unsigned char) match_position+offset;
+			code_buf[code_buf_ptr++] = (unsigned char) match_position;
 			code_buf[code_buf_ptr++] = (unsigned char)
-				(((match_position+offset >> 4) & 0xf0)
+				(((match_position >> 4) & 0xf0)
 			  | (match_length - (THRESHOLD + 1)));  /* Send position and
 					length pair. Note match_length > THRESHOLD. */
 		}
 		if ((mask <<= 1) == 0) {  /* Shift mask left one bit. */
 			for (i = 0; i < code_buf_ptr; i++)  /* Send at most 8 units of */
-				str_out[part][codesize+i] = code_buf[i];     /* code together */
+				str_out[codesize+i+offset] = code_buf[i];     /* code together */
 			codesize += code_buf_ptr;
 			code_buf[0] = 0;  code_buf_ptr = mask = 1;
 		}
@@ -196,8 +203,8 @@ void Encode(int upper, int part, int offset, char * str_in, char * str_out[], in
 			InsertNode(r, lson, rson, dad, &match_position, &match_length, text_buf);	/* Register the string in text_buf[r..r+F-1] */
 		}
 		if ((textsize += i) > printcount) {
-			/*printf("%12ld\r", textsize);*/  printcount += 1024;
-				/* Reports progress each time the textsize exceeds
+			/*printf("%12ld\r", textsize);*/  
+			printcount += 1024; /* Reports progress each time the textsize exceeds
 				   multiples of 1024. */
 		}
 		while (i++ < last_match_length) {	/* After the end of text, */
@@ -207,30 +214,29 @@ void Encode(int upper, int part, int offset, char * str_in, char * str_out[], in
 		}
 	} while (len > 0);	/* until length of string to be processed is zero */
 	if (code_buf_ptr > 1) {		/* Send remaining code. */
-		for (i = 0; i < code_buf_ptr; i++) str_out[part][codesize+i] = code_buf[i];
+		for (i = 0; i < code_buf_ptr; i++) str_out[codesize+i+offset] = code_buf[i];
 		codesize += code_buf_ptr;
 	}
-	printf("In : %ld bytes\n", textsize);	/* Encoding is done. */
-	printf("Out: %ld bytes\n", codesize);
-	printf("Out/In: %.3f\n", (double)codesize / textsize);
+	//printf("In : %ld bytes\n", textsize);	/* Encoding is done. */
+	//printf("Out: %ld bytes\n", codesize);
+	//printf("Out/In: %.3f\n", (double)codesize / textsize);
 	sizes[part] = codesize;
 }
 
 // TODO: global
-// no branches
+// no branches - no cuda for the moment
 void Decode(FILE * in)	/* Just the reverse of Encode(). */
 {
 	int  i, j, k, r, c;
-	unsigned int  flags;
+	unsigned int flags;
 	
-	unsigned char
-		text_buf[N + F - 1];	/* ring buffer of size N,
+	unsigned char text_buf[N + F - 1];	/* ring buffer of size N,
 			with extra F-1 bytes to facilitate string comparison */
 	
 	for (i = 0; i < N - F; i++) text_buf[i] = ' ';
 	r = N - F;  flags = 0;
 	for ( ; ; ) {
-		if (((flags >>= 1) & 256) == 0) {
+		if (((flags >>= 1) & 256) == 0) { 
 			if ((c = getc(in)) == EOF) break;
 			flags = c | 0xff00;		/* uses higher byte cleverly */
 		}							/* to count eight */
@@ -249,6 +255,7 @@ void Decode(FILE * in)	/* Just the reverse of Encode(). */
 	}
 }
 
+//cpu
 void readFile(FILE * in, char * str_in){
 	int i = 0;
 	while(1){
@@ -258,6 +265,7 @@ void readFile(FILE * in, char * str_in){
 	}
 }
 
+//cpu
 void writeFile(FILE * out, int part, int sizes[], char * str_out[]){
 	int i = 0;
 	while(i < sizes[part]){
@@ -266,92 +274,144 @@ void writeFile(FILE * out, int part, int sizes[], char * str_out[]){
 	putc(EOF, out);
 }
 
-int main(int argc, char *argv[])
-{
-	char  *s, *in;	
-	char * str_in, // TODO: can have in global memory since
-		* str_out; // TODO: need to come up with better way
-	int sizes[PARTITIONS];
-	
-	if (argc != 4) {
-		printf("'lzss e file1 file2' encodes file1 into file2.\n"
-			   "'lzss d file2 file1' decodes file2 into file1.\n");
-		return EXIT_FAILURE;
-	}
-	if ((s = argv[1], s[1] || strpbrk(s, "DEde") == NULL)
-	 || (s = argv[2], in = argv[2], (infile  = fopen(s, "rb")) == NULL)
-	 || (s = argv[3], (outfile = fopen(s, "wb")) == NULL)) {
-		printf("??? %s\n", s);  return EXIT_FAILURE;
-	}
-	
-	if (toupper(*argv[1]) == 'E'){
-		time_t start = time(NULL);
-		printf("\nStart time: %ld\n", start);
-		
-		// file size
-		stat(argv[2], &st);
-		int size = st.st_size;
-		printf("%d\n",size);
-		
-		
-		str_in = (char *) malloc (size);
-		
-		//createStringOfSize(size, &str_in, &str_out);
-		str_out = (char *) malloc(size);	
-		
-		int part = 0, seeksize = size/PARTITIONS;
-		
-		remove(s);
-		
-		readFile(infile, str_in);
-		// TODO: move all to device memory;
-		// device malloc > copy to card
-		
-		// TODO: kernel call
-		// TODO: save all encoded files to array elements
-		// TODO: move that to main memory
-		// TODO: file write
-		
-		
-		pid_t pids[PARTITIONS];
-		for(part = 0; part < PARTITIONS; part++){
-			int pid =fork();
-			if(pid > 0) {
-				pids[part] = pid;
-				continue;
-			} else {
-				sprintf(s,"%s.%d",s,part);
-				FILE * out = fopen(s, "wb");
-				s[strlen(s)-2] = '\0';
-				//Encode << < 1, PARTITIONS >>>(size, str_in_cuda, str_out_cuda, sizes_cuda);
-				Encode(seeksize+(part==PARTITIONS ? size%PARTITIONS:0), part, size/PARTITIONS * part, str_in, str_out, sizes);
-				writeFile(out, part, sizes, str_out);
-				return EXIT_SUCCESS;
-			}
-		}
-		for(part = 0; part < PARTITIONS; part++) {
-			if(pids[part] > 0) {
-				printf("\n\nWaiting on part: %d\n\n", part);
-				waitpid(pids[part], NULL, 0);
-			}
-		}
-		time_t end = time(NULL);// - start;
-		printf("\nEnd time: %ld\n", end);
-		printf("\nTime taken: %f\n",difftime(end, start));
-		//int msec = diff * 1000 / CLOCKS_PER_SEC;
-		//printf("Time taken %d seconds %d milliseconds\n", msec/1000, msec%1000);
-	} else {
-		// Decode
-		int part = 0;
-		for(part = 0; part < PARTITIONS; part++){
-			in[strlen(in)-2] = '\0';
-			sprintf(in,"%s.%d",in,part);
-			printf("%s\n",in);
-			FILE * inf = fopen(in, "rb");
-			Decode(inf);
-			fclose(inf);
-		}
-	}
-	fclose(infile);  fclose(outfile);
-	return EXIT_SUCCESS;
+
+int main(int argc, char *argv[]) {
+    char *s, *in;
+
+    char * str_in; // TODO: can have in global memory since
+    char * str_out; // TODO: need to come up with better way
+    int sizes[PARTITIONS];
+
+    if (argc != 4) {
+        printf("'lzss e file1 file2' encodes file1 into file2.\n"
+                "'lzss d file2 file1' decodes file2 into file1.\n");
+        return EXIT_FAILURE;
+    }
+    if ((s = argv[1], s[1] || strpbrk(s, "DEde") == NULL)
+            || (s = argv[2], in = argv[2], (infile = fopen(s, "rb")) == NULL)
+            || (s = argv[3], (outfile = fopen(s, "wb")) == NULL)) {
+        printf("??? %s\n", s);
+        return EXIT_FAILURE;
+    }
+    remove(s);
+
+    if (toupper(*argv[1]) == 'E') {
+        /*
+        time_t start = time(NULL);
+        printf("\nStart time: %ld\n", start);
+         */
+
+        // file size
+        stat(argv[2], &st);
+        int size = st.st_size;
+        //printf("%d\n",size);		
+
+        str_in = (char *) malloc(size);
+
+        //createStringOfSize(size, &str_in, &str_out);
+        int i;
+        str_out = (char *) malloc(size);
+
+        readFile(infile, str_in);
+
+        // TODO: move all to device memory;
+        // device malloc > copy to card
+
+        //cuda alloc
+        char * str_in_cuda;
+        char * str_out_cuda;
+        int * sizes_cuda;
+
+        //allocate gpu mem
+        checkCuda(cudaMalloc((void**) &str_in_cuda, size));
+        checkCuda(cudaMalloc((void**) &str_out_cuda, size));
+        checkCuda(cudaMalloc((void**) &sizes_cuda, sizeof (int)*PARTITIONS));
+        //int i;
+        /*for (i = 0; i < PARTITIONS; i++) {
+            
+            //cudaMalloc((void**) &str_out_cuda[i], (size / PARTITIONS + size % PARTITIONS) * sizeof (char));
+            checkCuda(cudaMalloc((void**) &str_out_cuda[i], (size / PARTITIONS + size % PARTITIONS) * sizeof (char)));
+        }*/
+
+        //copy to cuda mem
+        //cudaMemcpy(str_in_cuda, str_in, size, cudaMemcpyHostToDevice);
+        checkCuda(cudaMemcpy(str_in_cuda, str_in, size, cudaMemcpyHostToDevice));
+
+        // TODO: kernel call - save all encoded files to array elements
+        // run function on GPU <<<blocks, no_of_threads>>>
+
+        Encode << < 1, PARTITIONS >>>(size, str_in_cuda, str_out_cuda, sizes_cuda);
+
+        // TODO: copy back to RAM from GPU
+        //cudaMemcpy(str_out, str_out_cuda, PARTITIONS * sizeof (char*), cudaMemcpyDeviceToHost);
+        //TODO: :cudaErrorInvalidValue Error Code : 11
+        //checkCuda(cudaMemcpy(str_out, str_out_cuda, PARTITIONS * sizeof(char*), cudaMemcpyDeviceToHost));
+
+        for (i = 0; i < PARTITIONS; i++) {
+            //cudaMemcpy(str_out, str_out_cuda, (size / PARTITIONS + size % PARTITIONS) * sizeof (char), cudaMemcpyDeviceToHost);
+            checkCuda(cudaMemcpy(str_out, str_out_cuda, (size/PARTITIONS + size%PARTITIONS)*sizeof(char), cudaMemcpyDeviceToHost));
+        }
+        cudaMemcpy(sizes, sizes_cuda, sizeof (int)*PARTITIONS, cudaMemcpyDeviceToHost);
+        //checkCuda(cudaMemcpy(sizes, sizes_cuda, sizeof(int)*PARTITIONS, cudaMemcpyDeviceToHost));
+
+        // TODO: file write
+        for (i = 0; i < PARTITIONS; i++) {
+            printf("part %d - %d\n", i, sizes[i]);
+            // file names
+            sprintf(s, "%s.%d", s, i);
+            FILE * out = fopen(s, "wb");
+            s[strlen(s) - 2] = '\0';
+
+            // write encoded
+            //writeFile(out, i, sizes, str_out);
+        }
+
+        /*
+        // fork
+        pid_t pids[PARTITIONS];
+        for(part = 0; part < PARTITIONS; part++){
+        	int pid =fork();
+        	if(pid > 0) {
+            	pids[part] = pid;
+            	continue;
+        	} else {        
+            	//Encode(seeksize+(part==PARTITIONS ? size%PARTITIONS:0), part, size/PARTITIONS * part, str_in, str_out, sizes);        
+        
+        		// file names
+                                sprintf(s,"%s.%d",s,part);
+                                FILE * out = fopen(s, "wb");
+                                s[strlen(s)-2] = '\0';
+        
+        // write encoded
+                                writeFile(out, part, sizes, str_out);
+                                return EXIT_SUCCESS;
+                        }
+                }
+                for(part = 0; part < PARTITIONS; part++) {
+                        if(pids[part] > 0) {
+                                printf("\n\nWaiting on part: %d\n\n", part);
+                                waitpid(pids[part], NULL, 0);
+                        }
+                }*/
+
+        /*
+                     time_t end = time(NULL);// - start;
+                     printf("\nEnd time: %ld\n", end);
+                     printf("\nTime taken: %f\n",difftime(end, start));
+		*/
+    } else {
+        // Decode
+        int part = 0;
+        for (part = 0; part < PARTITIONS; part++) {
+            in[strlen(in) - 2] = '\0';
+            sprintf(in, "%s.%d", in, part);
+            printf("%s\n", in);
+            FILE * inf = fopen(in, "rb");
+            Decode(inf);
+            fclose(inf);
+        }
+    }
+    fclose(infile);
+    fclose(outfile);
+    return EXIT_SUCCESS;
 }

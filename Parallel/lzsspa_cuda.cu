@@ -120,7 +120,7 @@ __device__ void DeleteNode(int p, int lson[], int rson[], int dad[])  /* deletes
 
 // TODO: global
 //                    
-__global__ void Encode(int size, char * str_in, char * str_out[], int *sizes)  //txt buf
+__global__ void Encode(int size, char * str_in, char * str_out, int *sizes)  //txt buf
 {
 	int  i, c, len, r, s, last_match_length, code_buf_ptr;
  
@@ -185,7 +185,7 @@ __global__ void Encode(int size, char * str_in, char * str_out[], int *sizes)  /
 		}
 		if ((mask <<= 1) == 0) {  /* Shift mask left one bit. */
 			for (i = 0; i < code_buf_ptr; i++)  /* Send at most 8 units of */
-				str_out[part][codesize+i] = code_buf[i];     /* code together */
+				str_out[codesize+i+offset] = code_buf[i];     /* code together */
 			codesize += code_buf_ptr;
 			code_buf[0] = 0;  code_buf_ptr = mask = 1;
 		}
@@ -214,7 +214,7 @@ __global__ void Encode(int size, char * str_in, char * str_out[], int *sizes)  /
 		}
 	} while (len > 0);	/* until length of string to be processed is zero */
 	if (code_buf_ptr > 1) {		/* Send remaining code. */
-		for (i = 0; i < code_buf_ptr; i++) str_out[part][codesize+i] = code_buf[i];
+		for (i = 0; i < code_buf_ptr; i++) str_out[codesize+i+offset] = code_buf[i];
 		codesize += code_buf_ptr;
 	}
 	//printf("In : %ld bytes\n", textsize);	/* Encoding is done. */
@@ -266,10 +266,10 @@ void readFile(FILE * in, char * str_in){
 }
 
 //cpu
-void writeFile(FILE * out, int part, int sizes[], char * str_out[]){
+void writeFile(FILE * out, int part, int sizes[], char * str_out[], int offset){
 	int i = 0;
 	while(i < sizes[part]){
-		putc(str_out[part][i++], out);
+		putc(str_out[offset + i++], out);
 	}
 	putc(EOF, out);
 }
@@ -279,7 +279,7 @@ int main(int argc, char *argv[]) {
     char *s, *in;
 
     char * str_in; // TODO: can have in global memory since
-    char * str_out[PARTITIONS]; // TODO: need to come up with better way
+    char * str_out; // TODO: need to come up with better way
     int sizes[PARTITIONS];
 
     if (argc != 4) {
@@ -310,9 +310,7 @@ int main(int argc, char *argv[]) {
 
         //createStringOfSize(size, &str_in, &str_out);
         int i;
-        for (i = 0; i < PARTITIONS; i++) {
-            str_out[i] = (char *) malloc(size / PARTITIONS + size % PARTITIONS);
-        }
+        str_out = (char *) malloc(size);
 
         readFile(infile, str_in);
 
@@ -321,19 +319,19 @@ int main(int argc, char *argv[]) {
 
         //cuda alloc
         char * str_in_cuda;
-        char * str_out_cuda[PARTITIONS];
+        char * str_out_cuda;
         int * sizes_cuda;
 
         //allocate gpu mem
         checkCuda(cudaMalloc((void**) &str_in_cuda, size));
-        checkCuda(cudaMalloc((void**) &str_out_cuda, sizeof (char*)*PARTITIONS));
+        checkCuda(cudaMalloc((void**) &str_out_cuda, size));
         checkCuda(cudaMalloc((void**) &sizes_cuda, sizeof (int)*PARTITIONS));
         //int i;
-        for (i = 0; i < PARTITIONS; i++) {
+        /*for (i = 0; i < PARTITIONS; i++) {
             
             //cudaMalloc((void**) &str_out_cuda[i], (size / PARTITIONS + size % PARTITIONS) * sizeof (char));
             checkCuda(cudaMalloc((void**) &str_out_cuda[i], (size / PARTITIONS + size % PARTITIONS) * sizeof (char)));
-        }
+        }*/
 
         //copy to cuda mem
         //cudaMemcpy(str_in_cuda, str_in, size, cudaMemcpyHostToDevice);
@@ -365,7 +363,8 @@ int main(int argc, char *argv[]) {
             s[strlen(s) - 2] = '\0';
 
             // write encoded
-            //writeFile(out, i, sizes, str_out);
+            //int offset = size/PARTITIONS * i;
+            //writeFile(out, i, sizes, str_out, );
         }
 
         /*
