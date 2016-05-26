@@ -8,6 +8,9 @@
 		PC-VAN		SCIENCE
 		NIFTY-Serve	PAF01022
 		CompuServe	74050,1022
+***************************************************************
+  5/2016 
+  @midified by: E/11/258, E/11/269, E/11/353
 **************************************************************/
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,9 +31,6 @@
 
 #define PARTITIONS 8
 
-// TODO: need to remove coupling of all these variables
-
-
 FILE	*infile, *outfile;  /* input & output files */
 
 struct stat st; /* to get file size */
@@ -42,7 +42,6 @@ void createStringOfSize(int size, char * str_in[], char ** str_out[]){
 	}
 }
 
-// TODO: device
 __device__ void InitTree(int lson[], int rson[], int dad[])  /* initialize trees */
 {
 	int  i;
@@ -59,7 +58,6 @@ __device__ void InitTree(int lson[], int rson[], int dad[])  /* initialize trees
 	for (i = 0; i < N; i++) dad[i] = NIL;
 }
 
-// TODO: device
 __device__ void InsertNode(int r, int lson[], int rson[], int dad[], int *match_position, int *match_length, unsigned char
 		text_buf[]) 
 	/* Inserts string of length F, text_buf[r..r+F-1], into one of the
@@ -96,7 +94,6 @@ __device__ void InsertNode(int r, int lson[], int rson[], int dad[], int *match_
 	dad[p] = NIL;  /* remove p */
 }
 
-// TODO: device
 __device__ void DeleteNode(int p, int lson[], int rson[], int dad[])  /* deletes node p from tree */
 {
 	int  q;
@@ -117,21 +114,19 @@ __device__ void DeleteNode(int p, int lson[], int rson[], int dad[])  /* deletes
 	if (rson[dad[p]] == p) rson[dad[p]] = q;  else lson[dad[p]] = q;
 	dad[p] = NIL;
 }
-
-// TODO: global
-//                    
-__global__ void Encode(int size, char * str_in, char * str_out, int *sizes)  //txt buf
+           
+__global__ void EncodeCUDA(int size, char * str_in, char * str_out, int *sizes)
 {
 	int  i, c, len, r, s, last_match_length, code_buf_ptr;
  
-  	int part = threadIdx.x;  
-  	int seeksize = size/PARTITIONS;
-  	int upper = seeksize+(part==PARTITIONS ? size%PARTITIONS:0);
-  	int offset = size/PARTITIONS * part;
+	int part = threadIdx.x;  
+	int seeksize = size/PARTITIONS;
+	int upper = seeksize+(part==PARTITIONS ? size%PARTITIONS:0);
+	int offset = (size/PARTITIONS) * part;
 	
 	int match_position, match_length;  /* of longest match.  These are
 			set by the InsertNode() procedure. */	
-	int 	lson[N + 1], 
+	int lson[N + 1], 
 			rson[N + 257], 
 			dad[N + 1];  /* left & right children &
 				parents -- These constitute binary search trees. */
@@ -214,7 +209,9 @@ __global__ void Encode(int size, char * str_in, char * str_out, int *sizes)  //t
 		}
 	} while (len > 0);	/* until length of string to be processed is zero */
 	if (code_buf_ptr > 1) {		/* Send remaining code. */
-		for (i = 0; i < code_buf_ptr; i++) str_out[codesize+i+offset] = code_buf[i];
+		for (i = 0; i < code_buf_ptr; i++){
+      str_out[codesize+i+offset] = code_buf[i];
+    }
 		codesize += code_buf_ptr;
 	}
 	//printf("In : %ld bytes\n", textsize);	/* Encoding is done. */
@@ -223,8 +220,7 @@ __global__ void Encode(int size, char * str_in, char * str_out, int *sizes)  //t
 	sizes[part] = codesize;
 }
 
-// TODO: global
-// no branches - no cuda for the moment
+// TODO: global >> no branches - no cuda for the moment
 void Decode(FILE * in)	/* Just the reverse of Encode(). */
 {
 	int  i, j, k, r, c;
@@ -266,14 +262,13 @@ void readFile(FILE * in, char * str_in){
 }
 
 //cpu
-void writeFile(FILE * out, int part, int sizes[], char * str_out[], int offset){
+void writeFile(FILE * out, int part, int sizes[], char * str_out, int offset){
 	int i = 0;
 	while(i < sizes[part]){
 		putc(str_out[offset + i++], out);
 	}
 	putc(EOF, out);
 }
-
 
 int main(int argc, char *argv[]) {
     char *s, *in;
@@ -294,6 +289,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
     remove(s);
+    int i;
 
     if (toupper(*argv[1]) == 'E') {
         /*
@@ -303,19 +299,12 @@ int main(int argc, char *argv[]) {
 
         // file size
         stat(argv[2], &st);
-        int size = st.st_size;
-        //printf("%d\n",size);		
+        int size = st.st_size;	
 
         str_in = (char *) malloc(size);
-
-        //createStringOfSize(size, &str_in, &str_out);
-        int i;
         str_out = (char *) malloc(size);
 
         readFile(infile, str_in);
-
-        // TODO: move all to device memory;
-        // device malloc > copy to card
 
         //cuda alloc
         char * str_in_cuda;
@@ -325,7 +314,7 @@ int main(int argc, char *argv[]) {
         //allocate gpu mem
         checkCuda(cudaMalloc((void**) &str_in_cuda, size));
         checkCuda(cudaMalloc((void**) &str_out_cuda, size));
-        checkCuda(cudaMalloc((void**) &sizes_cuda, sizeof (int)*PARTITIONS));
+        checkCuda(cudaMalloc((void**) &sizes_cuda, sizeof(int)*PARTITIONS));
         //int i;
         /*for (i = 0; i < PARTITIONS; i++) {
             
@@ -337,69 +326,44 @@ int main(int argc, char *argv[]) {
         //cudaMemcpy(str_in_cuda, str_in, size, cudaMemcpyHostToDevice);
         checkCuda(cudaMemcpy(str_in_cuda, str_in, size, cudaMemcpyHostToDevice));
 
-        // TODO: kernel call - save all encoded files to array elements
+        // kernel call - save all encoded files to array elements
         // run function on GPU <<<blocks, no_of_threads>>>
 
-        Encode << < 1, PARTITIONS >>>(size, str_in_cuda, str_out_cuda, sizes_cuda);
+        EncodeCUDA << < 1, PARTITIONS >>>(size, str_in_cuda, str_out_cuda, sizes_cuda);
 
         // TODO: copy back to RAM from GPU
         //cudaMemcpy(str_out, str_out_cuda, PARTITIONS * sizeof (char*), cudaMemcpyDeviceToHost);
+        checkCuda(cudaMemcpy(str_out, str_out_cuda, size, cudaMemcpyDeviceToHost));
         //TODO: :cudaErrorInvalidValue Error Code : 11
-        //checkCuda(cudaMemcpy(str_out, str_out_cuda, PARTITIONS * sizeof(char*), cudaMemcpyDeviceToHost));
 
-        for (i = 0; i < PARTITIONS; i++) {
+        /*for (i = 0; i < PARTITIONS; i++) {
             //cudaMemcpy(str_out, str_out_cuda, (size / PARTITIONS + size % PARTITIONS) * sizeof (char), cudaMemcpyDeviceToHost);
             checkCuda(cudaMemcpy(str_out, str_out_cuda, (size/PARTITIONS + size%PARTITIONS)*sizeof(char), cudaMemcpyDeviceToHost));
-        }
-        cudaMemcpy(sizes, sizes_cuda, sizeof (int)*PARTITIONS, cudaMemcpyDeviceToHost);
+        }*/
+        
+        cudaMemcpy(sizes, sizes_cuda, sizeof(int)*PARTITIONS, cudaMemcpyDeviceToHost);
         //checkCuda(cudaMemcpy(sizes, sizes_cuda, sizeof(int)*PARTITIONS, cudaMemcpyDeviceToHost));
 
-        // TODO: file write
+        // file write
         for (i = 0; i < PARTITIONS; i++) {
-            printf("part %d - %d\n", i, sizes[i]);
-            // file names
-            sprintf(s, "%s.%d", s, i);
-            FILE * out = fopen(s, "wb");
-            s[strlen(s) - 2] = '\0';
+            //printf("part %d - %d\n", i, sizes[i]);
+            char fileName[strlen(s)+5];
+            // creating file names
+            sprintf(fileName, "%s.%d", s, i);
+            //printf("%s\n", fileName);
+            FILE * out = fopen(fileName, "wb");
+            //s[strlen(s) - 2] = '\0';
 
             // write encoded
-            //int offset = size/PARTITIONS * i;
-            //writeFile(out, i, sizes, str_out, );
+            int offset = (size/PARTITIONS) * i;
+            writeFile(out, i, sizes, str_out, offset);
         }
 
         /*
-        // fork
-        pid_t pids[PARTITIONS];
-        for(part = 0; part < PARTITIONS; part++){
-        	int pid =fork();
-        	if(pid > 0) {
-            	pids[part] = pid;
-            	continue;
-        	} else {        
-            	//Encode(seeksize+(part==PARTITIONS ? size%PARTITIONS:0), part, size/PARTITIONS * part, str_in, str_out, sizes);        
-        
-        		// file names
-                                sprintf(s,"%s.%d",s,part);
-                                FILE * out = fopen(s, "wb");
-                                s[strlen(s)-2] = '\0';
-        
-        // write encoded
-                                writeFile(out, part, sizes, str_out);
-                                return EXIT_SUCCESS;
-                        }
-                }
-                for(part = 0; part < PARTITIONS; part++) {
-                        if(pids[part] > 0) {
-                                printf("\n\nWaiting on part: %d\n\n", part);
-                                waitpid(pids[part], NULL, 0);
-                        }
-                }*/
-
-        /*
-                     time_t end = time(NULL);// - start;
-                     printf("\nEnd time: %ld\n", end);
-                     printf("\nTime taken: %f\n",difftime(end, start));
-		*/
+        time_t end = time(NULL); // - start;
+        printf("\nEnd time: %ld\n", end);
+        printf("\nTime taken: %f\n",difftime(end, start));
+		    */
     } else {
         // Decode
         int part = 0;
