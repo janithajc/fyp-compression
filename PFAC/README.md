@@ -1,5 +1,7 @@
 ## PFAC library integration into LZSS algorithms string matching
-
+---
+##### NOTE! PFAC LIBRARY WAS CHANGED SLIGTLY TO SET STRING FROM CODE THAN READ FROM FILE
+---
 #### In order to use this please follow these steps
 
 1. Download and make [PFAC library](https://github.com/pfac-lib/pfac "PFAC git repo")
